@@ -42,9 +42,9 @@ def validate_and_resolve_path(requested_path: str) -> Path:
 async def get_docx(path: str)-> File | dict[str, str]:
     """列出目录内容或提供文件下载"""
     try:
+        target_path = validate_and_resolve_path(path or "")
         file_time = datetime.datetime.strptime(path.split(".")[0], "%Y-%m-%d_%H:%M:%S")
         request_time = datetime.datetime.now() - datetime.timedelta(days=1)
-        target_path = validate_and_resolve_path(path or "")
         # 超时删除文件
         if file_time < request_time:
             os.remove(target_path)
@@ -72,9 +72,7 @@ async def general_docx(data: TextPayload) -> dict[str, str]:
         source_file_path = SOURCE_PATH / f"{now_str}.md"
         target_file_path = TRARGET_PATH / f"{now_str}.docx"
         
-        context = data.context
-        context = context.replace('\\n', '\n')
-        print(context)
+        context = data.context.replace('\\n', '\n')
         # 暂存调用的文件
         async with aiofiles.open(source_file_path, mode='w') as f:
             await f.write(context)
