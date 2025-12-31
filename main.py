@@ -1,48 +1,75 @@
+import datetime
 import os
 import pypandoc
 import uvicorn
+import aiofiles
+from pathlib import Path
 from litestar import Litestar, get, post
+from litestar.exceptions import NotFoundException
+from litestar.response import File
 
+SOURCE_PATH = Path('./source')
+SOURCE_PATH = SOURCE_PATH.resolve()
+TRARGET_PATH = Path('./target')
+TRARGET_PATH = TRARGET_PATH.resolve()
 
+# 确保目录存在
+SOURCE_PATH.mkdir(exist_ok=True)
+TRARGET_PATH.mkdir(exist_ok=True)
 
-@get("/")
-async def index() -> str:
-    return "Hello, world!"
+def validate_and_resolve_path(requested_path: str) -> Path:
+    """验证并解析路径，防止目录遍历攻击"""
+    if not requested_path:
+        return TRARGET_PATH
+    # 规范化路径并解析为绝对路径
+    try:
+        # 移除开头的斜杠
+        requested_path = requested_path.lstrip("/")
+        # 使用Pathlib安全地拼接路径
+        resolved = (TRARGET_PATH / requested_path).resolve()
+        # 安全检查：确保解析后的路径仍在基础目录内
+        if not str(resolved).startswith(str(TRARGET_PATH)):
+            raise RuntimeError("访问被拒绝：非法路径")
+        return resolved
+    except Exception as e:
+        raise RuntimeError(f"路径解析错误: {str(e)}")
+
+@get("/get_docx/{path:str}")
+async def get_docx(path: str):
+    """列出目录内容或提供文件下载"""
+    try:
+        target_path = validate_and_resolve_path(path or "")
+        if not target_path.exists():
+            raise NotFoundException(f"路径不存在: {path}")
+        if not target_path.is_file():
+            raise NotFoundException(f"路径不是文件: {path}")
+        return File(
+            path=target_path,
+            filename=target_path.name,
+            stat_result=target_path.stat()
+        )
+    except Exception as e:
+        return {
+            "status": "error",
+            "msg": str(e)
+        } 
 
 
 @post("/general_docx")
-async def general_docx(context: str) -> dict[str, int]:
+async def general_docx(context: str) -> dict[str, str]:
     try:
-        with open("", mode='') as f:
-            ...
-        return {"status": "success"}
-    except Exception as e:
-        return {
-            "status": "success",
-            "msg": str(e)
-        }    
-
-
-app = Litestar([index, general_docx])
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", port=8901, log_level="info")
-
-def markdown_to_word_advanced(md_text, output_path="output.docx"):
-    """
-    使用pandoc将Markdown转换为Word文档
-    """
-    try:
-        # 将Markdown文本写入临时文件
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False, encoding='utf-8') as temp_md:
-            temp_md.write(md_text)
-            temp_md_path = temp_md.name
-        
+        # 生成路径信息
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        source_file_path = SOURCE_PATH / f"{now_str}.md"
+        target_file_path = TRARGET_PATH / f"{now_str}.docx"
+        # 暂存调用的文件
+        async with aiofiles.open(source_file_path, mode='w') as f:
+            await f.write(context)
         # 使用pandoc转换
         pypandoc.convert_file(
-            temp_md_path,
+            source_file_path,
             'docx',
-            outputfile=output_path,
+            outputfile=target_file_path,
             extra_args=[
                 '--wrap=auto',
                 '--highlight-style=tango',
@@ -50,14 +77,20 @@ def markdown_to_word_advanced(md_text, output_path="output.docx"):
                 f'--resource-path={os.getcwd()}'
             ]
         )
-        
-        print(f"✅ Word文档已保存至: {output_path}")
-        
+        # 生成url
+        return {
+            "status": "success"
+            
+        }
     except Exception as e:
-        print(f"❌ 转换失败: {e}")
-        
-    finally:
-        # 清理临时文件
-        if 'temp_md_path' in locals() and os.path.exists(temp_md_path):
-            os.unlink(temp_md_path)
+        return {
+            "status": "error",
+            "msg": str(e)
+        }    
+
+
+app = Litestar([get_docx, general_docx])
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", port=8901, log_level="info")
 
