@@ -7,6 +7,7 @@ from pathlib import Path
 from litestar import Litestar, get, post
 from litestar.exceptions import NotFoundException
 from litestar.response import File
+from pydantic import BaseModel
 
 SOURCE_PATH = Path('./source')
 SOURCE_PATH = SOURCE_PATH.resolve()
@@ -16,6 +17,9 @@ TRARGET_PATH = TRARGET_PATH.resolve()
 # 确保目录存在
 SOURCE_PATH.mkdir(exist_ok=True)
 TRARGET_PATH.mkdir(exist_ok=True)
+
+class TextPayload(BaseModel):
+    context: str
 
 def validate_and_resolve_path(requested_path: str) -> Path:
     """验证并解析路径，防止目录遍历攻击"""
@@ -35,10 +39,15 @@ def validate_and_resolve_path(requested_path: str) -> Path:
         raise RuntimeError(f"路径解析错误: {str(e)}")
 
 @get("/get_docx/{path:str}")
-async def get_docx(path: str):
+async def get_docx(path: str)-> File | dict[str, str]:
     """列出目录内容或提供文件下载"""
     try:
+        file_time = datetime.datetime.strptime(path.split(".")[0], "%Y-%m-%d_%H:%M:%S")
+        request_time = datetime.datetime.now() - datetime.timedelta(days=1)
         target_path = validate_and_resolve_path(path or "")
+        # 超时删除文件
+        if file_time < request_time:
+            os.remove(target_path)
         if not target_path.exists():
             raise NotFoundException(f"路径不存在: {path}")
         if not target_path.is_file():
@@ -56,12 +65,16 @@ async def get_docx(path: str):
 
 
 @post("/general_docx")
-async def general_docx(context: str) -> dict[str, str]:
+async def general_docx(data: TextPayload) -> dict[str, str]:
     try:
         # 生成路径信息
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
         source_file_path = SOURCE_PATH / f"{now_str}.md"
         target_file_path = TRARGET_PATH / f"{now_str}.docx"
+        
+        context = data.context
+        context = context.replace('\\n', '\n')
+        print(context)
         # 暂存调用的文件
         async with aiofiles.open(source_file_path, mode='w') as f:
             await f.write(context)
@@ -79,8 +92,8 @@ async def general_docx(context: str) -> dict[str, str]:
         )
         # 生成url
         return {
-            "status": "success"
-            
+            "status": "success",
+            "url": f"{now_str}.docx"
         }
     except Exception as e:
         return {
